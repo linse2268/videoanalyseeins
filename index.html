@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Lokale Videoanalyse</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #111;
+      color: #fff;
+    }
+
+    .app {
+      width: min(900px, 100%);
+      margin: auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+
+    .subtitle {
+      color: #aaa;
+      margin-bottom: 20px;
+    }
+
+    .upload {
+      border: 2px dashed #444;
+      border-radius: 16px;
+      padding: 30px 20px;
+      text-align: center;
+      cursor: pointer;
+      background: #181818;
+      margin-bottom: 20px;
+    }
+
+    .upload:hover {
+      border-color: #777;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    video {
+      width: 100%;
+      max-height: 500px;
+      display: block;
+      background: #000;
+      border-radius: 14px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 15px 0;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 15px;
+      cursor: pointer;
+      background: #fff;
+      color: #111;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .status {
+      color: #aaa;
+      min-height: 24px;
+      margin: 10px 0;
+    }
+
+    .progress {
+      height: 8px;
+      background: #292929;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #fff;
+      transition: width 0.1s linear;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .metric {
+      background: #181818;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .metric-label {
+      color: #aaa;
+      font-size: 13px;
+      margin-bottom: 5px;
+    }
+
+    .metric-value {
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .chart-container {
+      background: #181818;
+      border-radius: 14px;
+      padding: 15px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    canvas.chart {
+      width: 100%;
+      height: 250px;
+      display: block;
+    }
+
+    .cuts {
+      background: #181818;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .cut-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .cut {
+      background: #333;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 13px;
+    }
+
+    .info {
+      color: #888;
+      font-size: 13px;
+      line-height: 1.5;
+      margin-top: 20px;
+    }
+
+    @media (max-width: 600px) {
+      .app {
+        padding: 12px;
+      }
+
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-value {
+        font-size: 24px;
+      }
+
+      canvas.chart {
+        height: 200px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="app">
+
+  <h1>Lokale Videoanalyse</h1>
+  <div class="subtitle">
+    Farbkontrast · Bewegung · Schnitte
+  </div>
+
+  <label class="upload">
+    <strong>Video auswählen</strong>
+    <br>
+    <span style="color:#888">
+      Das Video bleibt auf deinem Gerät.
+    </span>
+    <input id="fileInput" type="file" accept="video/*">
+  </label>
+
+  <video id="video" controls playsinline preload="metadata"></video>
+
+  <div class="controls">
+    <button id="analyzeBtn" disabled>
+      Analyse starten
+    </button>
+
+    <button id="clearBtn" disabled>
+      Zurücksetzen
+    </button>
+  </div>
+
+  <div class="status" id="status">
+    Noch kein Video ausgewählt.
+  </div>
+
+  <div class="progress">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <div class="metrics">
+
+    <div class="metric">
+      <div class="metric-label">Ø Farbkontrast</div>
+      <div class="metric-value" id="avgContrast">–</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Ø Bewegung</div>
+      <div class="metric-value" id="avgMotion">–</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Schnitte</div>
+      <div class="metric-value" id="cutCount">–</div>
+    </div>
+
+  </div>
+
+  <div class="chart-container">
+    <canvas id="chart" class="chart"></canvas>
+  </div>
+
+  <div class="cuts">
+    <strong>Erkannte Schnitte</strong>
+    <div class="cut-list" id="cutList">
+      <span style="color:#777">Noch keine Analyse.</span>
+    </div>
+  </div>
+
+  <div class="info">
+    Die Analyse erfolgt vollständig lokal im Browser.
+    Es werden keine Videodaten an einen Server übertragen.
+  </div>
+
+</div>
+
+
+<script>
+"use strict";
+
+/*
+  ============================================================
+  Lokale Videoanalyse
+  ============================================================
+
+  Analysiert:
+
+  1. Farbkontrast
+  2. Bewegung
+  3. Schnitte
+
+  Keine externen Libraries.
+  Keine Serververbindung.
+*/
+
+
+const fileInput = document.getElementById("fileInput");
+const video = document.getElementById("video");
+const analyzeBtn = document.getElementById("analyzeBtn");
+const clearBtn = document.getElementById("clearBtn");
+
+const statusEl = document.getElementById("status");
+const progressBar = document.getElementById("progressBar");
+
+const avgContrastEl = document.getElementById("avgContrast");
+const avgMotionEl = document.getElementById("avgMotion");
+const cutCountEl = document.getElementById("cutCount");
+const cutListEl = document.getElementById("cutList");
+
+const chart = document.getElementById("chart");
+const chartCtx = chart.getContext("2d");
+
+
+/*
+  Kleine Analyseauflösung.
+
+  96 x 54 = 5184 Pixel pro Frame.
+
+  Das ist absichtlich klein, damit die Analyse
+  auch auf Smartphones schnell bleibt.
+*/
+const ANALYSIS_WIDTH = 96; //96
+const ANALYSIS_HEIGHT = 54; // 54
+
+
+/*
+  Anzahl Frames pro Sekunde.
+
+  8 FPS ist für Farb-/Bewegungs-/Schnittanalyse
+  ein guter Kompromiss für mobile Geräte.
+*/
+const SAMPLE_FPS = 8;
+
+
+/*
+  Canvas für die Frameanalyse.
+*/
+const analysisCanvas = document.createElement("canvas");
+analysisCanvas.width = ANALYSIS_WIDTH;
+analysisCanvas.height = ANALYSIS_HEIGHT;
+
+const analysisCtx = analysisCanvas.getContext("2d", {
+  willReadFrequently: true
+});
+
+
+let videoURL = null;
+let results = [];
+let previousFrame = null;
+let isAnalyzing = false;
+
+
+/*
+  ------------------------------------------------------------
+  Datei auswählen
+  ------------------------------------------------------------
+*/
+
+fileInput.addEventListener("change", () => {
+
+  const file = fileInput.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  if (videoURL) {
+    URL.revokeObjectURL(videoURL);
+  }
+
+  videoURL = URL.createObjectURL(file);
+
+  video.src = videoURL;
+
+  analyzeBtn.disabled = false;
+  clearBtn.disabled = false;
+
+  statusEl.textContent =
+    `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
+
+  progressBar.style.width = "0%";
+
+  avgContrastEl.textContent = "–";
+  avgMotionEl.textContent = "–";
+  cutCountEl.textContent = "–";
+
+  cutListEl.innerHTML =
+    '<span style="color:#777">Noch keine Analyse.</span>';
+
+  results = [];
+
+  drawEmptyChart();
+});
+
+
+/*
+  ------------------------------------------------------------
+  Zurücksetzen
+  ------------------------------------------------------------
+*/
+
+clearBtn.addEventListener("click", () => {
+
+  if (videoURL) {
+    URL.revokeObjectURL(videoURL);
+    videoURL = null;
+  }
+
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+
+  fileInput.value = "";
+
+  analyzeBtn.disabled = true;
+  clearBtn.disabled = true;
+
+  results = [];
+  previousFrame = null;
+
+  statusEl.textContent =
+    "Noch kein Video ausgewählt.";
+
+  progressBar.style.width = "0%";
+
+  avgContrastEl.textContent = "–";
+  avgMotionEl.textContent = "–";
+  cutCountEl.textContent = "–";
+
+  cutListEl.innerHTML =
+    '<span style="color:#777">Noch keine Analyse.</span>';
+
+  drawEmptyChart();
+});
+
+
+/*
+  ------------------------------------------------------------
+  Analyse starten
+  ------------------------------------------------------------
+*/
+
+analyzeBtn.addEventListener("click", async () => {
+
+  if (!video.duration || !isFinite(video.duration)) {
+    statusEl.textContent =
+      "Video konnte noch nicht geladen werden.";
+    return;
+  }
+
+  if (isAnalyzing) {
+    return;
+  }
+
+  isAnalyzing = true;
+
+  analyzeBtn.disabled = true;
+
+  results = [];
+  previousFrame = null;
+
+  progressBar.style.width = "0%";
+
+  statusEl.textContent =
+    "Analyse wird vorbereitet …";
+
+  try {
+
+    await analyzeVideo();
+
+    finishAnalysis();
+
+  } catch (error) {
+
+    console.error(error);
+
+    statusEl.textContent =
+      "Fehler bei der Analyse.";
+
+  } finally {
+
+    isAnalyzing = false;
+    analyzeBtn.disabled = false;
+
+  }
+});
+
+
+/*
+  ------------------------------------------------------------
+  Videoanalyse
+  ------------------------------------------------------------
+*/
+
+async function analyzeVideo() {
+
+  const duration = video.duration;
+
+  /*
+    Wir wählen die Anzahl der Samples anhand
+    der Videolänge.
+
+    Beispiel:
+
+    20 Sekunden × 8 FPS = 160 Frames
+  */
+
+  const totalSamples =
+    Math.max(
+      1,
+      Math.ceil(duration * SAMPLE_FPS)
+    );
+
+
+  for (let i = 0; i < totalSamples; i++) {
+
+    const time =
+      Math.min(
+        duration - 0.001,
+        i / SAMPLE_FPS
+      );
+
+    await seekVideo(time);
+
+    /*
+      Frame in kleines Canvas rendern.
+    */
+
+    analysisCtx.drawImage(
+      video,
+      0,
+      0,
+      ANALYSIS_WIDTH,
+      ANALYSIS_HEIGHT
+    );
+
+
+    const imageData =
+      analysisCtx.getImageData(
+        0,
+        0,
+        ANALYSIS_WIDTH,
+        ANALYSIS_HEIGHT
+      );
+
+
+    /*
+      Farbkontrast
+    */
+
+    const contrast =
+      calculateContrast(imageData);
+
+
+    /*
+      Bewegung
+    */
+
+    const motion =
+      calculateMotion(imageData);
+
+
+    /*
+      Schnitt
+    */
+
+    const cutScore =
+      calculateCutScore(
+        imageData,
+        contrast,
+        motion
+      );
+
+
+    results.push({
+      time,
+      contrast,
+      motion,
+      cutScore
+    });
+
+
+    /*
+      Aktuelles Frame für nächsten Vergleich speichern.
+    */
+
+    previousFrame =
+      new Uint8ClampedArray(imageData.data);
+
+
+    /*
+      Fortschrittsanzeige.
+    */
+
+    const progress =
+      ((i + 1) / totalSamples) * 100;
+
+    progressBar.style.width =
+      progress.toFixed(1) + "%";
+
+
+    statusEl.textContent =
+      `Analyse ${Math.round(progress)} %`;
+
+
+    /*
+      Browser kurz Luft lassen.
+
+      Besonders wichtig auf Smartphones,
+      damit die Oberfläche nicht komplett einfriert.
+    */
+
+    if (i % 4 === 0) {
+      await nextFrame();
+    }
+  }
+}
+
+
+/*
+  ------------------------------------------------------------
+  Video auf bestimmte Zeit setzen
+  ------------------------------------------------------------
+*/
+
+function seekVideo(time) {
+
+  return new Promise((resolve, reject) => {
+
+    const onSeeked = () => {
+
+      cleanup();
+      resolve();
+
+    };
+
+    const onError = () => {
+
+      cleanup();
+      reject(
+        new Error("Video konnte nicht gelesen werden.")
+      );
+
+    };
+
+    function cleanup() {
+
+      video.removeEventListener(
+        "seeked",
+        onSeeked
+      );
+
+      video.removeEventListener(
+        "error",
+        onError
+      );
+
+    }
+
+    video.addEventListener(
+      "seeked",
+      onSeeked,
+      { once: true }
+    );
+
+    video.addEventListener(
+      "error",
+      onError,
+      { once: true }
+    );
+
+    video.currentTime = time;
+
+  });
+
+}
+
+
+/*
+  ------------------------------------------------------------
+  Farbkontrast
+  ------------------------------------------------------------
+
+  Wir berechnen zunächst die Luminanz jedes Pixels.
+
+  Danach:
+
+  Kontrast =
+  Standardabweichung der Helligkeitswerte
+
+  Hohe Standardabweichung =
+  helle UND dunkle Bereiche vorhanden.
+
+  Danach wird auf 0–100 normalisiert.
+  ------------------------------------------------------------
+*/
+
+function calculateContrast(imageData) {
+
+  const data = imageData.data;
+
+  let sum = 0;
+  let count = 0;
+
+  /*
+    Luminanzen sammeln.
+  */
+
+  for (let i = 0; i < data.length; i += 4) {
+
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    const luminance =
+      0.2126 * r +
+      0.7152 * g +
+      0.0722 * b;
+
+    sum += luminance;
+
+    count++;
+  }
+
+  const mean =
+    sum / count;
+
+
+  /*
+    Varianz.
+  */
+
+  let variance = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    const luminance =
+      0.2126 * r +
+      0.7152 * g +
+      0.0722 * b;
+
+    const diff =
+      luminance - mean;
+
+    variance += diff * diff;
+  }
+
+  variance /= count;
+
+  const std =
+    Math.sqrt(variance);
+
+
+  /*
+    Typische Werte liegen grob zwischen 0 und 100.
+
+    64 wird hier als sehr hoher Kontrast angenommen.
+  */
+
+  return clamp(
+    (std / 64) * 100,
+    0,
+    100
+  );
+}
+
+
+/*
+  ------------------------------------------------------------
+  Bewegung
+  ------------------------------------------------------------
+
+  Wir vergleichen jeden Pixel mit dem vorherigen Frame.
+
+  Je größer die durchschnittliche Differenz,
+  desto höher die Bewegung.
+  ------------------------------------------------------------
+*/
+
+function calculateMotion(imageData) {
+
+  if (!previousFrame) {
+    return 0;
+  }
+
+  const current =
+    imageData.data;
+
+  let totalDifference = 0;
+
+  let count = 0;
+
+
+  for (let i = 0; i < current.length; i += 4) {
+
+    /*
+      Nur Helligkeit vergleichen.
+
+      Das ist günstiger als RGB komplett zu vergleichen.
+    */
+
+    const currentLum =
+      0.2126 * current[i] +
+      0.7152 * current[i + 1] +
+      0.0722 * current[i + 2];
+
+
+    const previousLum =
+      0.2126 * previousFrame[i] +
+      0.7152 * previousFrame[i + 1] +
+      0.0722 * previousFrame[i + 2];
+
+
+    totalDifference +=
+      Math.abs(
+        currentLum - previousLum
+      );
+
+    count++;
+  }
+
+
+  const averageDifference =
+    totalDifference / count;
+
+
+  /*
+    25 Helligkeitsstufen Unterschied
+    werden als sehr starke Bewegung betrachtet.
+
+    Das kann später kalibriert werden.
+  */
+
+  return clamp(
+    (averageDifference / 25) * 100,
+    0,
+    100
+  );
+}
+
+
+/*
+  ------------------------------------------------------------
+  Schnittanalyse
+  ------------------------------------------------------------
+
+  Ein Schnitt verursacht häufig:
+
+  - starke Pixeländerung
+  - Histogrammänderung
+  - deutliche Helligkeitsänderung
+
+  Wir verwenden hier Pixeländerung + Kontrast.
+  ------------------------------------------------------------
+*/
+
+function calculateCutScore(
+  imageData,
+  contrast,
+  motion
+) {
+
+  if (!previousFrame) {
+    return 0;
+  }
+
+  const current =
+    imageData.data;
+
+  let totalDifference = 0;
+
+  let count = 0;
+
+
+  for (let i = 0; i < current.length; i += 4) {
+
+    const r1 = current[i];
+    const g1 = current[i + 1];
+    const b1 = current[i + 2];
+
+    const r2 = previousFrame[i];
+    const g2 = previousFrame[i + 1];
+    const b2 = previousFrame[i + 2];
+
+
+    /*
+      Farbunterschied.
+    */
+
+    const difference =
+      (
+        Math.abs(r1 - r2) +
+        Math.abs(g1 - g2) +
+        Math.abs(b1 - b2)
+      ) / 3;
+
+
+    totalDifference +=
+      difference;
+
+    count++;
+  }
+
+
+  const averageDifference =
+    totalDifference / count;
+
+
+  /*
+    50 durchschnittliche RGB-Stufen
+    entsprechen einem sehr starken Unterschied.
+  */
+
+  const pixelScore =
+    clamp(
+      (averageDifference / 50) * 100,
+      0,
+      100
+    );
+
+
+  /*
+    Bewegung alleine soll keinen Schnitt erzeugen.
+
+    Wir gewichten deshalb den visuellen Sprung
+    stärker als die Bewegung.
+  */
+
+  const score =
+    pixelScore * 0.85 +
+    Math.min(motion, 70) * 0.15;
+
+
+  return clamp(
+    score,
+    0,
+    100
+  );
+}
+
+
+/*
+  ------------------------------------------------------------
+  Analyse fertigstellen
+  ------------------------------------------------------------
+*/
+
+function finishAnalysis() {
+
+  if (!results.length) {
+    return;
+  }
+
+
+  /*
+    Durchschnittswerte.
+  */
+
+  const avgContrast =
+    average(
+      results.map(r => r.contrast)
+    );
+
+  const avgMotion =
+    average(
+      results.map(r => r.motion)
+    );
+
+
+  avgContrastEl.textContent =
+    Math.round(avgContrast);
+
+  avgMotionEl.textContent =
+    Math.round(avgMotion);
+
+
+  /*
+    Schnitte erkennen.
+  */
+
+  const cuts =
+    detectCuts(results);
+
+
+  cutCountEl.textContent =
+    cuts.length;
+
+
+  renderCutList(cuts);
+
+  drawChart(results, cuts);
+
+
+  statusEl.textContent =
+    `Analyse abgeschlossen · ${results.length} Frames untersucht.`;
+}
+
+
+/*
+  ------------------------------------------------------------
+  Schnitte erkennen
+  ------------------------------------------------------------
+
+  Wir verwenden nicht nur einen einzelnen Frame.
+
+  Zusätzlich gibt es eine Mindestdistanz zwischen
+  zwei Schnitten, damit ein einziger Übergang
+  nicht mehrfach erkannt wird.
+  ------------------------------------------------------------
+*/
+
+function detectCuts(data) {
+
+  const cuts = [];
+
+  /*
+    Score-Schwelle.
+
+    Kann später kalibriert werden.
+  */
+
+  const THRESHOLD = 72;
+
+
+  /*
+    Mindestens 0.35 Sekunden zwischen Schnitten.
+  */
+
+  const MIN_DISTANCE = 0.35;
+
+
+  let lastCutTime = -Infinity;
+
+
+  for (let i = 1; i < data.length - 1; i++) {
+
+    const current =
+      data[i];
+
+    const previous =
+      data[i - 1];
+
+    const next =
+      data[i + 1];
+
+
+    /*
+      Lokales Maximum.
+
+      Dadurch wird nicht jeder Frame
+      eines längeren Übergangs als Cut erkannt.
+    */
+
+    const isPeak =
+      current.cutScore >= previous.cutScore &&
+      current.cutScore >= next.cutScore;
+
+
+    if (
+      isPeak &&
+      current.cutScore >= THRESHOLD &&
+      current.time - lastCutTime >= MIN_DISTANCE
+    ) {
+
+      cuts.push({
+        time: current.time,
+        score: current.cutScore
+      });
+
+      lastCutTime =
+        current.time;
+    }
+  }
+
+
+  return cuts;
+}
+
+
+/*
+  ------------------------------------------------------------
+  Schnittliste darstellen
+  ------------------------------------------------------------
+*/
+
+function renderCutList(cuts) {
+
+  if (!cuts.length) {
+
+    cutListEl.innerHTML =
+      '<span style="color:#777">Keine deutlichen Schnitte erkannt.</span>';
+
+    return;
+  }
+
+
+  cutListEl.innerHTML = "";
+
+
+  cuts.forEach(cut => {
+
+    const element =
+      document.createElement("div");
+
+    element.className =
+      "cut";
+
+
+    element.textContent =
+      `${formatTime(cut.time)} · ${Math.round(cut.score)}%`;
+
+
+    /*
+      Klick auf Schnitt springt im Video dorthin.
+    */
+
+    element.addEventListener("click", () => {
+
+      video.currentTime =
+        cut.time;
+
+      video.play().catch(() => {});
+
+    });
+
+
+    element.style.cursor =
+      "pointer";
+
+
+    cutListEl.appendChild(element);
+
+  });
+}
+
+
+/*
+  ------------------------------------------------------------
+  Chart
+  ------------------------------------------------------------
+*/
+
+function prepareChartCanvas() {
+
+  const rect =
+    chart.getBoundingClientRect();
+
+  const dpr =
+    window.devicePixelRatio || 1;
+
+
+  chart.width =
+    Math.round(rect.width * dpr);
+
+  chart.height =
+    Math.round(rect.height * dpr);
+
+
+  chartCtx.setTransform(
+    dpr,
+    0,
+    0,
+    dpr,
+    0,
+    0
+  );
+
+
+  return {
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+
+function drawEmptyChart() {
+
+  const {
+    width,
+    height
+  } = prepareChartCanvas();
+
+
+  chartCtx.clearRect(
+    0,
+    0,
+    width,
+    height
+  );
+
+
+  chartCtx.strokeStyle =
+    "#333";
+
+  chartCtx.lineWidth =
+    1;
+
+
+  for (let i = 0; i <= 4; i++) {
+
+    const y =
+      (height / 4) * i;
+
+    chartCtx.beginPath();
+
+    chartCtx.moveTo(
+      0,
+      y
+    );
+
+    chartCtx.lineTo(
+      width,
+      y
+    );
+
+    chartCtx.stroke();
+  }
+}
+
+
+function drawChart(data, cuts) {
+
+  const {
+    width,
+    height
+  } = prepareChartCanvas();
+
+
+  chartCtx.clearRect(
+    0,
+    0,
+    width,
+    height
+  );
+
+
+  /*
+    Hintergrundlinien.
+  */
+
+  chartCtx.strokeStyle =
+    "#292929";
+
+  chartCtx.lineWidth =
+    1;
+
+
+  for (let i = 0; i <= 4; i++) {
+
+    const y =
+      (height / 4) * i;
+
+    chartCtx.beginPath();
+
+    chartCtx.moveTo(
+      0,
+      y
+    );
+
+    chartCtx.lineTo(
+      width,
+      y
+    );
+
+    chartCtx.stroke();
+  }
+
+
+  /*
+    Funktion zum Zeichnen einer Kurve.
+  */
+
+  function drawLine(
+    key,
+    lineWidth
+  ) {
+
+    chartCtx.beginPath();
+
+    chartCtx.lineWidth =
+      lineWidth;
+
+    chartCtx.strokeStyle =
+      "#ffffff";
+
+
+    data.forEach((item, index) => {
+
+      const x =
+        (item.time / data[data.length - 1].time)
+        * width;
+
+      const y =
+        height -
+        (item[key] / 100) * height;
+
+
+      if (index === 0) {
+        chartCtx.moveTo(x, y);
+      } else {
+        chartCtx.lineTo(x, y);
+      }
+
+    });
+
+    chartCtx.stroke();
+  }
+
+
+  /*
+    Kontrast
+  */
+
+  chartCtx.setLineDash([]);
+
+  drawLine(
+    "contrast",
+    2
+  );
+
+
+  /*
+    Bewegung gestrichelt
+  */
+
+  chartCtx.setLineDash([
+    5,
+    4
+  ]);
+
+  drawLine(
+    "motion",
+    2
+  );
+
+
+  /*
+    Schnittscore gepunktet.
+  */
+
+  chartCtx.setLineDash([
+    2,
+    5
+  ]);
+
+  drawLine(
+    "cutScore",
+    1
+  );
+
+
+  chartCtx.setLineDash([]);
+
+
+  /*
+    Schnittmarkierungen.
+  */
+
+  chartCtx.strokeStyle =
+    "#ffffff";
+
+  chartCtx.lineWidth =
+    1;
+
+
+  cuts.forEach(cut => {
+
+    const x =
+      (cut.time / data[data.length - 1].time)
+      * width;
+
+
+    chartCtx.beginPath();
+
+    chartCtx.moveTo(
+      x,
+      0
+    );
+
+    chartCtx.lineTo(
+      x,
+      height
+    );
+
+    chartCtx.stroke();
+
+  });
+}
+
+
+/*
+  Fenstergröße geändert.
+*/
+
+window.addEventListener(
+  "resize",
+  () => {
+
+    if (results.length) {
+
+      drawChart(
+        results,
+        detectCuts(results)
+      );
+
+    } else {
+
+      drawEmptyChart();
+
+    }
+
+  }
+);
+
+
+/*
+  ------------------------------------------------------------
+  Hilfsfunktionen
+  ------------------------------------------------------------
+*/
+
+function clamp(
+  value,
+  min,
+  max
+) {
+
+  return Math.max(
+    min,
+    Math.min(max, value)
+  );
+}
+
+
+function average(values) {
+
+  if (!values.length) {
+    return 0;
+  }
+
+  return values.reduce(
+    (sum, value) => sum + value,
+    0
+  ) / values.length;
+}
+
+
+function formatTime(seconds) {
+
+  const minutes =
+    Math.floor(seconds / 60);
+
+  const secs =
+    Math.floor(seconds % 60);
+
+  return (
+    String(minutes).padStart(2, "0") +
+    ":" +
+    String(secs).padStart(2, "0")
+  );
+}
+
+
+function nextFrame() {
+
+  return new Promise(resolve => {
+
+    if ("requestIdleCallback" in window) {
+
+      requestIdleCallback(
+        () => resolve(),
+        { timeout: 50 }
+      );
+
+    } else {
+
+      setTimeout(
+        resolve,
+        0
+      );
+
+    }
+
+  });
+}
+
+
+/*
+  Initialer Chart.
+*/
+
+drawEmptyChart();
+
+</script>
+
+</body>
+</html>
